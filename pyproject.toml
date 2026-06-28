@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oracle-shield"
+version = "0.1.0"
+description = "A small sound-oracle verification layer for AI-produced claims, with an honest coverage report."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Melissa D. Ellison" }]
+keywords = ["verification", "ai-safety", "neurosymbolic", "oracle", "assurance"]
+dependencies = ["sympy>=1.10"]
+
+[tool.setuptools]
+py-modules = ["oracle_shield"]
