@@ -20,6 +20,10 @@ import math
 import re
 
 import sympy
+from sympy.parsing.sympy_parser import (parse_expr, standard_transformations,
+                                        implicit_multiplication_application)
+
+_TX = standard_transformations + (implicit_multiplication_application,)
 
 SUPPORTED, REFUTED, DEFERRED = "SUPPORTED", "REFUTED", "DEFERRED"
 
@@ -50,13 +54,13 @@ def _is_cube(n):
 
 
 _NT_PATTERNS = [
-    (re.compile(r"is\s+(\d+)\s+prime", re.I),
+    (re.compile(r"is\s+(\d+)\s+(?:an?\s+)?prime", re.I),
      lambda m: (_is_prime(int(m[1])), f"primality of {m[1]}")),
     (re.compile(r"is\s+(\d+)\s+a perfect square", re.I),
      lambda m: (_is_square(int(m[1])), f"perfect-square test of {m[1]}")),
     (re.compile(r"is\s+(\d+)\s+a perfect cube", re.I),
      lambda m: (_is_cube(int(m[1])), f"perfect-cube test of {m[1]}")),
-    (re.compile(r"is\s+(\d+)\s+divisible by\s+(\d+)", re.I),
+    (re.compile(r"is\s+(\d+)\s+(?:an?\s+)?divisible by\s+(\d+)", re.I),
      lambda m: (int(m[1]) % int(m[2]) == 0, f"divisibility {m[1]}/{m[2]}")),
     (re.compile(r"(\d+)\s*\^\s*(\d+)\s*mod\s*(\d+)\s*=\s*(\d+)", re.I),
      lambda m: (pow(int(m[1]), int(m[2]), int(m[3])) == int(m[4]),
@@ -103,6 +107,163 @@ def cf_adjudicate(text):
     if rel in (sympy.true, sympy.false):
         return (SUPPORTED if bool(rel) else REFUTED, "sympy exact inequality")
     return None
+
+
+# ── oracle: symbolic calculus & algebra (sympy CAS, exact) ───────────────────
+# Verifies derivatives, definite/indefinite integrals, limits, finite summations, and universal
+# algebraic identities. Soundness: an answer is computed by the CAS, then checked equal to the claim via
+# symbolic simplification; equality it cannot settle returns None -> DEFERRED (never a guess). An
+# indefinite integral is checked the only sound way — by differentiating the claimed antiderivative.
+
+def _S(s):
+    # tolerant math parsing: ^ -> **, [..] -> (..), 'infinity' -> oo, and implicit multiplication
+    # ("2n", ")(", "2(x+1)") — the conventions models and humans actually write.
+    s = s.replace("^", "**").replace("[", "(").replace("]", ")")
+    s = re.sub(r"\*\*\{([^}]*)\}", r"**(\1)", s)         # LaTeX exponent x^{...} -> x**(...)
+    s = re.sub(r"\binfinity\b|\binf\b", "oo", s, flags=re.I)
+    return parse_expr(s, transformations=_TX)
+
+
+_AMBIG = {"e", "i"}  # lowercase e/i: could be Euler's number / the imaginary unit, NOT a free variable
+
+
+def _zero(expr):
+    """True = provably 0, False = provably nonzero, None = undecided (-> DEFER)."""
+    try:
+        expr = sympy.sympify(expr)
+        if sympy.expand(expr) == 0:
+            return True
+        s = sympy.simplify(expr)
+        if s == 0:
+            return True
+        fs = s.free_symbols
+        if any(str(x) in _AMBIG for x in fs):
+            return None     # 'e'/'i' might be a constant we mis-parsed as a variable -> never REFUTE, defer
+        if not fs:
+            r = s.equals(0)
+            return r if r in (True, False) else None
+        if s.is_polynomial(*sorted(fs, key=str)):
+            return False                                  # a nonzero polynomial is not an identity
+        return None                                      # transcendental & unresolved -> defer
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _verdict(z, basis):
+    if z is True:
+        return (SUPPORTED, basis)
+    if z is False:
+        return (REFUTED, basis + " — the two sides are not equal")
+    return None
+
+
+_DERIV = re.compile(r"d\s*/\s*d\s*([a-zA-Z])\s+(.+?)\s*=\s*(.+)$")
+# natural-language first derivative: anchored + only 'the/first' prefix so 'second/partial derivative'
+# do NOT match (they would be silently mis-computed as first-order -> a wrong verdict).
+_DERIV2 = re.compile(r"^\s*(?:the\s+)?(?:first\s+)?derivative\s+(?:of\s+)?(.+?)\s*=\s*(.+)$", re.I)
+# integral keyword: ∫ / int / \int / integral / integrate  (the forms models actually emit)
+_INTKW = r"(?:∫|\\?int(?:egral|egrate)?)"
+_DEFINT = re.compile(rf"{_INTKW}\s*_\s*\{{?(.+?)\}}?\s*\^\s*\{{?(.+?)\}}?\s+(.+?)\s*d([a-zA-Z])\s*=\s*(.+)$", re.I)
+_DEFINT2 = re.compile(rf"{_INTKW}\s+(.+?)\s*d([a-zA-Z])\s+from\s+(.+?)\s+to\s+(.+?)\s*=\s*(.+)$", re.I)
+_DEFINT3 = re.compile(rf"{_INTKW}\s+from\s+(.+?)\s+to\s+(.+?)\s+(.+?)\s*d([a-zA-Z])\s*=\s*(.+)$", re.I)
+_INDEFINT = re.compile(rf"{_INTKW}\s+(.+?)\s*d([a-zA-Z])\s*=\s*(.+)$", re.I)
+_LIM = re.compile(r"lim\s*_?\s*\{?\s*([a-zA-Z])\s*(?:->|→|to)\s*([^}\s]+)\s*\}?\s+(.+?)\s*=\s*(.+)$", re.I)
+_SUM = re.compile(r"(?:∑|sum)\s*_\s*\{?\s*([a-zA-Z])\s*=\s*(.+?)\s*\}?\s*\^\s*\{?(.+?)\}?\s+(.+?)\s*=\s*(.+)$", re.I)
+_SYM_SIG = re.compile(r"d\s*/\s*d[a-zA-Z]|\bderivative|∫|\bintegr|\blim|∑|\bsum", re.I)
+
+
+def sym_match(text):
+    if nt_match(text):
+        return False
+    if _SYM_SIG.search(text):
+        return True
+    if "=" in text and not re.search(r"[<>≤≥]", text) and "≡" not in text:
+        core = re.sub(r"sqrt|sin|cos|tan|exp|log|pi|integral|lim|sum", "", text, flags=re.I)
+        return bool(re.search(r"[a-zA-Z]", core))        # a plain equation carrying free symbols
+    return False
+
+
+def sym_adjudicate(text):
+    m = _DERIV.search(text)
+    if m:
+        v = sympy.Symbol(m.group(1))
+        return _verdict(_zero(sympy.diff(_S(m.group(2)), v) - _S(m.group(3))), f"symbolic derivative d/d{v}")
+    m = _DERIV2.search(text)
+    if m:
+        f = _S(m.group(1))
+        vs = sorted(f.free_symbols, key=str)
+        if len(vs) != 1:
+            return None                                  # ambiguous differentiation variable -> defer
+        return _verdict(_zero(sympy.diff(f, vs[0]) - _S(m.group(2))), f"symbolic derivative d/d{vs[0]}")
+    m = _DEFINT.search(text)
+    if m:
+        v = sympy.Symbol(m.group(4))
+        val = sympy.integrate(_S(m.group(3)), (v, _S(m.group(1)), _S(m.group(2))))
+        return _verdict(_zero(val - _S(m.group(5))), "definite integral (exact)")
+    m = _DEFINT2.search(text)
+    if m:
+        v = sympy.Symbol(m.group(2))
+        val = sympy.integrate(_S(m.group(1)), (v, _S(m.group(3)), _S(m.group(4))))
+        return _verdict(_zero(val - _S(m.group(5))), "definite integral (exact)")
+    m = _DEFINT3.search(text)
+    if m:
+        v = sympy.Symbol(m.group(4))
+        val = sympy.integrate(_S(m.group(3)), (v, _S(m.group(1)), _S(m.group(2))))
+        return _verdict(_zero(val - _S(m.group(5))), "definite integral (exact)")
+    m = _INDEFINT.search(text)
+    if m:
+        v = sympy.Symbol(m.group(2))
+        return _verdict(_zero(sympy.diff(_S(m.group(3)), v) - _S(m.group(1))),
+                        "indefinite integral (checked by differentiating the claimed antiderivative)")
+    m = _LIM.search(text)
+    if m:
+        v = sympy.Symbol(m.group(1))
+        val = sympy.limit(_S(m.group(3)), v, _S(m.group(2)))
+        return _verdict(_zero(val - _S(m.group(4))), f"limit as {v}->{m.group(2)}")
+    m = _SUM.search(text)
+    if m:
+        v = sympy.Symbol(m.group(1))
+        val = sympy.summation(_S(m.group(4)), (v, _S(m.group(2)), _S(m.group(3))))
+        return _verdict(_zero(sympy.simplify(val - _S(m.group(5)))), "summation closed form")
+    if "=" in text and not re.search(r"[<>≤≥]", text) and "≡" not in text:
+        parts = text.split("=")
+        if len(parts) == 2:
+            try:
+                A, B = _S(parts[0]), _S(parts[1])
+            except Exception:  # noqa: BLE001
+                return None
+            if A.free_symbols or B.free_symbols:
+                return _verdict(_zero(A - B), "algebraic identity (sympy, ∀ over the symbols)")
+    return None
+
+
+# ── oracle: series convergence (sympy convergence tests — sound) ─────────────
+# "sum_{k=1}^infinity 1/k^2 converges / diverges" -> Sum(...).is_convergent() (ratio/root/p-series/
+# integral/alternating tests). An undecidable case raises -> DEFER; a finite upper bound -> DEFER.
+
+_CONV = re.compile(r"(?:∑|sum)\s*_\s*\{?\s*([a-zA-Z])\s*=\s*(.+?)\s*\}?\s*\^\s*\{?(.+?)\}?\s+(.+?)\s+(?:is\s+)?(converges?|convergent|diverges?|divergent)\b", re.I)
+
+
+def conv_match(text):
+    return bool(_CONV.search(text))
+
+
+def conv_adjudicate(text):
+    m = _CONV.search(text)
+    if not m:
+        return None
+    var = sympy.Symbol(m.group(1))
+    if _S(m.group(3)) != sympy.oo:
+        return None                                      # convergence is a property of an INFINITE series
+    claims_conv = "conver" in m.group(5).lower()
+    try:
+        c = sympy.Sum(_S(m.group(4)), (var, _S(m.group(2)), sympy.oo)).is_convergent()
+    except Exception:  # noqa: BLE001
+        return None                                      # no conclusive test -> defer, never guess
+    if c not in (True, False):
+        return None
+    return (SUPPORTED if (bool(c) == claims_conv) else REFUTED,
+            f"series {'converges' if c else 'diverges'} (sympy convergence tests)")
 
 
 # ── oracle 3: modular congruences over ℤ/mℤ (finite exhaustion = complete) ────
@@ -163,6 +324,8 @@ def ev_adjudicate(text):
 ORACLES = [
     {"name": "number-theory", "type": "Python (deterministic)",     "match": nt_match, "adjudicate": nt_adjudicate},
     {"name": "closed-form",    "type": "sympy CAS (exact)",          "match": cf_match, "adjudicate": cf_adjudicate},
+    {"name": "symbolic",       "type": "sympy calculus/algebra (exact)", "match": sym_match, "adjudicate": sym_adjudicate},
+    {"name": "convergence",    "type": "sympy convergence tests (sound)", "match": conv_match, "adjudicate": conv_adjudicate},
     {"name": "modular",        "type": "ℤ/mℤ exhaustion (complete)",  "match": mod_match, "adjudicate": mod_adjudicate},
     {"name": "evidence-type",  "type": "GRADE-style ladder (illustrative)", "match": ev_match, "adjudicate": ev_adjudicate},
 ]
@@ -232,6 +395,11 @@ DEMO = [
     "Is 1000000007 divisible by 3?",                     # false
     "sqrt(2)+sqrt(3) = sqrt(5+2*sqrt(6))",               # true
     "sqrt(4) = 3",                                       # false
+    "d/dx sin(x) = cos(x)",                              # symbolic — true
+    "integral_0^1 x^2 dx = 1/3",                         # symbolic — true
+    "lim_{x->0} sin(x)/x = 1",                           # symbolic — true
+    "sum_{k=1}^n k = n*(n+1)/2",                         # symbolic — true
+    "(a+b)^2 = a^2 + 2*a*b + b^2",                       # symbolic identity — true
     "n^5 ≡ n (mod 5)",                                   # true (Fermat)
     "(a+b)^3 ≡ a^3+b^3 (mod 3)",                         # true (freshman's dream mod 3)
     "evidence: observational_study claim: causes",       # refuted (spin)

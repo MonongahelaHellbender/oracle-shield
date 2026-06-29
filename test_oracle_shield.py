@@ -14,7 +14,33 @@ CASES = [
     ("evidence: observational_study claim: causes", REFUTED),
     ("evidence: observational_study claim: association", SUPPORTED),
     ("This sentence is not checkable.", DEFERRED),
-    ("(a+b)^2 = a^2 + 2*a*b + b^2", DEFERRED),              # free vars -> defer
+    ("d/dx sin(x) = cos(x)", SUPPORTED),                    # symbolic — derivative
+    ("d/dx x^3 = 2*x^2", REFUTED),                          # symbolic — wrong derivative
+    ("integral_0^1 x^2 dx = 1/3", SUPPORTED),              # symbolic — definite integral
+    ("integral cos(x) dx = sin(x)", SUPPORTED),            # symbolic — indefinite (checked via diff)
+    ("lim_{x->0} sin(x)/x = 1", SUPPORTED),                # symbolic — limit
+    ("sum_{k=1}^n k^2 = n*(n+1)*(2*n+1)/6", SUPPORTED),    # symbolic — summation
+    ("(a+b)^2 = a^2 + 2*a*b + b^2", SUPPORTED),            # symbolic — universal identity (now provable)
+    ("(a+b)^2 = a^2 + b^2", REFUTED),                       # symbolic — false identity
+    ("Is 2 a prime number?", SUPPORTED),                   # robustness — 'a prime' phrasing
+    ("sum_{k=1}^n k^2 = n*(n+1)*(2n+1)/6", SUPPORTED),     # robustness — implicit multiplication (2n)
+    ("sum_{k=1}^n k^3 = [n*(n+1)/2]^2", SUPPORTED),        # robustness — [..] grouping + implicit mult
+    ("(2+3i)(2-3i) = 13", DEFERRED),                       # SOUNDNESS — true via i=√-1; must DEFER, never REFUTE
+    ("lim_{n->infinity} (1 + 1/n)^n = e", DEFERRED),       # SOUNDNESS — true via e=Euler; must DEFER, never REFUTE
+    ("integrate x dx from 0 to n = n^2/2", SUPPORTED),     # robustness — prose "integrate ... from ... to ..."
+    ("integrate cos(x) dx = sin(x)", SUPPORTED),           # robustness — prose indefinite "integrate"
+    ("Is 24 a divisible by 6?", SUPPORTED),                # robustness — broadened divisibility phrasing
+    ("int sin(x) dx = -cos(x) + C", SUPPORTED),            # robustness — 'int' keyword + '+ C' (C diffs to 0)
+    ("int cos(x) dx = sin(x) + C", SUPPORTED),             # robustness — 'int' keyword
+    ("d/dx e^{x} = e^{x}", DEFERRED),                      # SOUNDNESS — LaTeX braces ok but 'e' ambiguous -> DEFER
+    ("derivative sin(x) = cos(x)", SUPPORTED),             # robustness — NL 'derivative' phrasing
+    ("derivative of x^3 = 3*x^2", SUPPORTED),              # robustness — NL 'derivative of'
+    ("second derivative of x^2 = 2", DEFERRED),            # SOUNDNESS — must NOT mis-compute as first-order
+    ("integral from 0 to 1 x^2 dx = 1/3", SUPPORTED),      # robustness — bounds-first prose integral
+    ("sum_{k=1}^infinity 1/k^2 converges", SUPPORTED),     # convergence lane — p-series p=2
+    ("sum_{k=1}^infinity 1/k converges", REFUTED),         # convergence lane — harmonic diverges
+    ("sum_{k=1}^oo 1/k diverges", SUPPORTED),              # convergence lane — diverges claim
+    ("sum_{k=1}^5 1/k converges", DEFERRED),               # convergence lane — finite bound -> defer
     ("", DEFERRED),                                         # empty input
     (12345, DEFERRED),                                      # non-string input
     ("sqrt(2 = 4", DEFERRED),                               # malformed: matches closed-form, crashes parse -> MUST defer
