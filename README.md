@@ -4,7 +4,7 @@
 
 A small verification layer for AI-produced claims. An untrusted router dispatches each claim to a
 deterministic / sound oracle (number theory, closed-form algebra, symbolic calculus/algebra, series
-convergence, modular arithmetic, evidence-type licensing). Covered claims get **SUPPORTED / REFUTED** with the oracle's trust
+convergence, modular arithmetic, evidence-type licensing, and clinical-statistics consistency). Covered claims get **SUPPORTED / REFUTED** with the oracle's trust
 basis; everything else is **DEFERRED** — and the tool reports the **coverage denominator** most evaluations
 hide.
 
@@ -19,7 +19,7 @@ This is that layer: small, sound, and honest about the (large) fraction it can't
 ```
 pip install sympy            # the only dependency
 python oracle_shield.py      # runs the demo + the coverage report
-python test_oracle_shield.py # 15 regression + robustness tests
+python test_oracle_shield.py # 61 regression + robustness tests
 ```
 
 ## Use it programmatically
@@ -48,6 +48,25 @@ sum_{k=1}^n k = n*(n+1)/2            finite summations (closed form)
 sum_{k=1}^infinity 1/k^2 converges   series convergence / divergence (separate lane)
 ```
 
+## Clinical / statistical claims
+
+Three deterministic lanes check whether a reported statistic is *internally consistent* — not whether
+the estimate is correct, only whether the claim's own numbers agree. Each defers on anything it can't
+settle by arithmetic.
+
+```
+RR 1.30 (95% CI 0.95-1.78), significant                      CI vs significance — REFUTED (straddles 1)
+sensitivity 99%, specificity 99%, prevalence 0.1%, PPV 99%   Bayes base rate  — REFUTED (true PPV ~9%)
+control 2%, treatment 1%, NNT 100                            ARR/RRR/NNT      — SUPPORTED (surfaces ARR 1pp)
+```
+
+The middle line is the classic **base-rate-neglect** error — a 99%/99% test at 0.1% prevalence has a
+positive predictive value near **9%**, not 99%. Sound basis: the 95% CI ⟷ 0.05 duality (interval
+containment of the null — 1 for a ratio, 0 for a difference), Bayes' theorem, and ARR = CER−EER. A claim
+is SUPPORTED only when it rounds to the truth, REFUTED only when it is a full unit or more off, and
+DEFERRED in between — or when the estimate type, CI level, a one-sided test, or a missing field leaves
+the answer undetermined.
+
 ## Design
 
 - **Trust lives in the oracles, never the router.** A misroute, an unknown claim, or a *crashing* oracle all
@@ -57,14 +76,22 @@ sum_{k=1}^infinity 1/k^2 converges   series convergence / divergence (separate l
 
 ## Honest limits
 
-- The six oracles are a starting set, not the world. The evidence-type lane is a **minimal illustrative
-  GRADE-style ladder**, not an epidemiology engine.
+- The nine oracles are a starting set, not the world. The evidence-type lane is a **minimal illustrative
+  GRADE-style ladder**, not an epidemiology engine; the clinical-statistics lanes check a claim's internal
+  arithmetic consistency, not whether the underlying estimate is correct.
 - The symbolic lane is **sound but incomplete**: it computes the answer with a CAS and checks it against the
   claim by symbolic simplification; equality it cannot settle returns DEFERRED rather than a guess.
 - On real open-ended text the checkable fraction is **small** — that's the point of the coverage report, not
   a bug. This is verification *infrastructure*, not a claim that most model output can be checked.
 
 ## Changelog
+
+**0.3.0** — added three deterministic **clinical / statistical** lanes: confidence-interval-vs-significance
+(the 95% CI ⟷ 0.05 duality), Bayes **PPV/NPV** (the base-rate-neglect catch), and **ARR/RRR/NNT** risk
+arithmetic (surfaces absolute risk next to any relative claim). A shared precision-aware tolerance SUPPORTS
+only when a claim rounds to the truth and REFUTES only when it is a full unit or more off, else DEFERS.
+Every underdetermined input (unknown estimate type, non-95% CI level, one-sided test, ARR≤0 for NNT,
+ambiguous rate) defers. Nine oracles; 61 tests.
 
 **0.2.0** — added a **symbolic calculus/algebra lane** (derivatives, definite/indefinite integrals, limits,
 finite summations, universal algebraic identities) and a **series-convergence lane** (sympy convergence
