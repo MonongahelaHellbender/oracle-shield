@@ -48,6 +48,13 @@ CASES = [
     ("2147483647 is prime", SUPPORTED),                     # coverage — declarative primality (README marquee, previously DEFERRED)
     ("9999800001 is a perfect square", SUPPORTED),          # coverage — declarative perfect-square, 99999^2 (previously DEFERRED)
     ("2147483646 is prime", REFUTED),                       # coverage — declarative, both-direction gold (even => not prime)
+    ("RR 0.70 (95% CI 0.55-0.89), significant", SUPPORTED), # stats-CI — ratio, CI excludes 1 => significant, claim matches
+    ("RR 1.30 (95% CI 0.95-1.78), significant", REFUTED),   # stats-CI — ratio, CI contains 1 => not significant; claim wrong
+    ("mean difference 2.3 (95% CI 0.5 to 4.1), significant", SUPPORTED),   # stats-CI — diff, CI excludes 0 => significant
+    ("mean difference 2.3 (95% CI -0.5 to 5.1) is not significant", SUPPORTED),  # stats-CI — diff, CI contains 0 => not sig, matches
+    ("HR 0.80 (95% CI 0.65-0.98), not significant", REFUTED),  # stats-CI — ratio, CI excludes 1 => significant; "not significant" wrong
+    ("1.30 (95% CI 0.95-1.78), significant", DEFERRED),     # SOUNDNESS — no estimate type => null unknown => DEFER
+    ("OR 1.30 (90% CI 1.05-1.61), significant", DEFERRED),  # SOUNDNESS — 90% CI not dual to 0.05 => DEFER
 ]
 
 

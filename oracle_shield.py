@@ -338,8 +338,76 @@ def ev_adjudicate(text):
     return (REFUTED, f"GRADE-style: '{ev}' too weak to license '{cl}'")
 
 
+# ── oracle 5: reported-statistic soundness — 95% CI ⟷ significance (deterministic) ────
+# A claim that reports an estimate with a 95% confidence interval AND asserts statistical
+# significance is checkable by arithmetic: for the standard two-sided 0.05 test, a 95% CI is
+# significant iff it EXCLUDES the null — 1 for a ratio measure (RR/OR/HR), 0 for a difference.
+# We adjudicate ONLY when the null is unambiguous, the interval parses, the CI level is 95%, no
+# non-0.05 threshold or one-sided test is stated; everything else DEFERS (never a guess). Catches
+# the most common misstatement in trial/press claims: "significant" on an interval straddling the
+# null (and the reverse). It does NOT judge whether the estimate itself is correct — only the
+# internal CI-vs-significance consistency of what was reported.
+
+_RATIO_TERMS = re.compile(r"\b(?:relative\s+risk|risk\s+ratio|rate\s+ratio|odds\s+ratio|hazard\s+ratio|incidence\s+rate\s+ratio)\b", re.I)
+_RATIO_ABBR = re.compile(r"\b(?:RR|OR|HR|IRR)\b")      # case-SENSITIVE: the English word 'or' must not match
+_DIFF_TERMS = re.compile(r"\b(?:mean\s+difference|risk\s+difference|absolute\s+risk\s+reduction|difference\s+in\s+means|mean\s+change)\b", re.I)
+_DIFF_ABBR = re.compile(r"\b(?:MD|RD|ARR)\b")          # case-SENSITIVE
+_CI_RANGE = re.compile(r"(?:CI|confidence\s+interval)\D{0,6}?(-?\d+(?:\.\d+)?)\s*(?:to|–|—|-)\s*(-?\d+(?:\.\d+)?)", re.I)
+
+
+def _null_value(text):
+    """1.0 for a ratio measure, 0.0 for a difference measure, None if unknown/ambiguous (-> DEFER)."""
+    is_ratio = bool(_RATIO_TERMS.search(text) or _RATIO_ABBR.search(text))
+    is_diff = bool(_DIFF_TERMS.search(text) or _DIFF_ABBR.search(text))
+    if is_ratio == is_diff:          # neither, or both -> the null is not determined -> defer
+        return None
+    return 1.0 if is_ratio else 0.0
+
+
+def _claimed_significant(text):
+    """True/False for the significance assertion, None if none is present (-> DEFER)."""
+    t = text.lower()
+    if re.search(r"\b(?:not|no|non)[-\s]*(?:statistically\s+)?significan", t):
+        return False
+    if "significan" in t:
+        return True
+    return None
+
+
+def ci_match(text):
+    return bool(re.search(r"\bCI\b|confidence\s+interval", text, re.I)) and "significan" in text.lower()
+
+
+def ci_adjudicate(text):
+    null = _null_value(text)
+    if null is None:
+        return None                                  # estimate type unknown -> can't locate the null
+    lvl = re.search(r"(\d{2})\s*%\s*(?:CI|confidence)", text, re.I)
+    if lvl and lvl.group(1) != "95":
+        return None                                  # only the 95% CI <-> 0.05 duality is sound here
+    if re.search(r"one[-\s]?(?:sided|tailed)", text, re.I):
+        return None                                  # one-sided test breaks the two-sided CI duality
+    pth = re.search(r"p\s*[<≤=]\s*(0?\.\d+)", text, re.I)
+    if pth and abs(float(pth.group(1)) - 0.05) > 1e-9:
+        return None                                  # a non-0.05 threshold isn't dual to a 95% CI
+    m = _CI_RANGE.search(text)
+    if not m:
+        return None                                  # interval didn't parse
+    lo, hi = float(m.group(1)), float(m.group(2))
+    if lo > hi:
+        return None                                  # malformed interval (lo > hi)
+    claimed = _claimed_significant(text)
+    if claimed is None:
+        return None
+    excludes_null = not (lo <= null <= hi)           # 95% CI excludes the null  <=>  significant at 0.05
+    basis = (f"95% CI [{lo:g}, {hi:g}] {'excludes' if excludes_null else 'contains'} the null "
+             f"{null:g} -> {'' if excludes_null else 'not '}significant")
+    return (SUPPORTED if excludes_null == claimed else REFUTED, basis)
+
+
 ORACLES = [
     {"name": "number-theory", "type": "Python (deterministic)",     "match": nt_match, "adjudicate": nt_adjudicate},
+    {"name": "stats-CI",       "type": "95% CI ⟷ 0.05 duality (deterministic)", "match": ci_match, "adjudicate": ci_adjudicate},
     {"name": "closed-form",    "type": "sympy CAS (exact)",          "match": cf_match, "adjudicate": cf_adjudicate},
     {"name": "symbolic",       "type": "sympy calculus/algebra (exact)", "match": sym_match, "adjudicate": sym_adjudicate},
     {"name": "convergence",    "type": "sympy convergence tests (sound)", "match": conv_match, "adjudicate": conv_adjudicate},
@@ -421,6 +489,8 @@ DEMO = [
     "(a+b)^3 ≡ a^3+b^3 (mod 3)",                         # true (freshman's dream mod 3)
     "evidence: observational_study claim: causes",       # refuted (spin)
     "evidence: observational_study claim: association",  # supported
+    "RR 0.70 (95% CI 0.55-0.89), significant",           # stats — 95% CI excludes 1 -> significant (true)
+    "RR 1.20 (95% CI 0.90-1.60), significant",           # stats — CI straddles 1 -> NOT significant (relative-risk spin; refuted)
     "This model is safe to deploy.",                     # uncovered
     "Scaling will solve reasoning.",                     # uncovered
 ]
