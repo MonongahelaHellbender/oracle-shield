@@ -67,6 +67,25 @@ is SUPPORTED only when it rounds to the truth, REFUTED only when it is a full un
 DEFERRED in between — or when the estimate type, CI level, a one-sided test, or a missing field leaves
 the answer undetermined.
 
+## Citation provenance (separate pre-gate — `provenance_oracle.py`)
+
+Junk can also enter as a **fabricated or retracted citation**. The provenance gate checks a cited
+DOI's existence (Handle System — catches LLM-hallucinated DOIs) and retraction status (Crossref,
+which now carries the Retraction Watch database):
+
+```
+python3 provenance_oracle.py --selftest    # 15 planted cases; refuses to run otherwise
+python3 provenance_oracle.py --check "10.1016/S0140-6736(97)11096-0"   # -> SOURCE_RETRACTED
+python3 provenance_oracle.py --live-test   # 3 known-answer network probes (Wakefield 1998 etc.)
+```
+
+Verdicts: `SOURCE_OK / SOURCE_RETRACTED / SOURCE_FLAGGED / SOURCE_NOT_FOUND / DEFERRED` — network
+failure DEFERS (unreachable ≠ nonexistent), and non-Crossref DOIs defer on retraction status
+rather than guessing. It is deliberately **not** registered as a claim lane: passing provenance
+never *supports* a claim — only failing it disqualifies the citation as evidence. `SOURCE_OK`
+means "exists, no retraction notice," not "good science." (Prior art: Zotero's Retraction Watch
+alerts, scite — this gate's job is the fail-closed verdict spine for AI-emitted citations.)
+
 ## Design
 
 - **Trust lives in the oracles, never the router.** A misroute, an unknown claim, or a *crashing* oracle all
@@ -85,6 +104,13 @@ the answer undetermined.
   a bug. This is verification *infrastructure*, not a claim that most model output can be checked.
 
 ## Changelog
+
+**0.4.0** — added the **citation-provenance pre-gate** (`provenance_oracle.py`): DOI existence via
+the Handle System (catches fabricated/LLM-hallucinated citations) + retraction/correction notices
+via Crossref (Retraction Watch data). Fail-closed: network trouble and non-Crossref DOIs DEFER;
+unknown notice types flag rather than pass. 15 planted selftest cases (injected transport, no
+network) + 3 known-answer live probes; not a claim lane by design — provenance failure
+disqualifies a citation, provenance success supports nothing.
 
 **0.3.0** — added three deterministic **clinical / statistical** lanes: confidence-interval-vs-significance
 (the 95% CI ⟷ 0.05 duality), Bayes **PPV/NPV** (the base-rate-neglect catch), and **ARR/RRR/NNT** risk
