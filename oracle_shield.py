@@ -405,9 +405,130 @@ def ci_adjudicate(text):
     return (SUPPORTED if excludes_null == claimed else REFUTED, basis)
 
 
+# ── oracle 6: diagnostic base rates — Bayes PPV/NPV vs sensitivity·specificity·prevalence ──
+# A claim reporting sensitivity, specificity, prevalence AND a predictive value (PPV/NPV) is
+# checkable by Bayes' theorem — the base-rate-neglect catch: a 99%/99% test at 0.1% prevalence has
+# a PPV near 9%, not 99%. Adjudicates only with all three inputs plus exactly one predictive value,
+# all parseable and in range; otherwise DEFERS.
+
+_SENS = re.compile(r"sensitivity\D{0,5}?(\d+(?:\.\d+)?)\s*(%?)", re.I)
+_SPEC = re.compile(r"specificity\D{0,5}?(\d+(?:\.\d+)?)\s*(%?)", re.I)
+_PREV = re.compile(r"prevalence\D{0,5}?(\d+(?:\.\d+)?)\s*(%?)", re.I)
+_PPV = re.compile(r"(?:PPV|positive\s+predictive\s+value)\D{0,5}?(\d+(?:\.\d+)?)\s*(%?)", re.I)
+_NPV = re.compile(r"(?:NPV|negative\s+predictive\s+value)\D{0,5}?(\d+(?:\.\d+)?)\s*(%?)", re.I)
+
+
+def _rate(m):
+    """A (number, '%'?) match -> probability in [0,1]; None if absent, >1 without '%', or out of range."""
+    if not m:
+        return None
+    v = float(m.group(1))
+    if m.lastindex and m.lastindex >= 2 and m.group(2):
+        v /= 100.0
+    elif v > 1.0:
+        return None                                  # bare value > 1 with no '%' is ambiguous -> defer
+    return v if 0.0 <= v <= 1.0 else None
+
+
+def _rounding_verdict(true, claimed, numstr, is_pct):
+    """True/False/None(defer): does `claimed` match `true` at the claimed value's own precision?
+    SUPPORT if it rounds to true, REFUTE if it's a full unit or more off, DEFER in the boundary band."""
+    ndec = len(numstr.split(".")[1]) if "." in numstr else 0
+    unit = (10.0 ** (-ndec)) / (100.0 if is_pct else 1.0)
+    diff = abs(true - claimed)
+    if diff <= unit / 2.0:
+        return True
+    if diff >= unit:
+        return False
+    return None
+
+
+def ppv_match(text):
+    t = text.lower()
+    return ("sensitivity" in t and "specificity" in t and "prevalence" in t
+            and ("ppv" in t or "npv" in t or "predictive value" in t))
+
+
+def ppv_adjudicate(text):
+    sens, spec, prev = _rate(_SENS.search(text)), _rate(_SPEC.search(text)), _rate(_PREV.search(text))
+    if sens is None or spec is None or prev is None or not (0.0 < prev < 1.0):
+        return None
+    pm, nm = _PPV.search(text), _NPV.search(text)
+    if bool(pm) == bool(nm):
+        return None                                  # neither or both -> defer
+    if pm:
+        label, cm = "PPV", pm
+        denom = sens * prev + (1 - spec) * (1 - prev)
+        true = (sens * prev) / denom if denom > 0 else None
+    else:
+        label, cm = "NPV", nm
+        denom = spec * (1 - prev) + (1 - sens) * prev
+        true = (spec * (1 - prev)) / denom if denom > 0 else None
+    claimed = _rate(cm)
+    if true is None or claimed is None:
+        return None
+    ok = _rounding_verdict(true, claimed, cm.group(1), bool(cm.group(2)))
+    if ok is None:
+        return None
+    basis = (f"Bayes {label} = {true * 100:.3g}% (sens {sens*100:g}%, spec {spec*100:g}%, "
+             f"prev {prev*100:g}%); claimed {claimed*100:g}%")
+    return (SUPPORTED if ok else REFUTED, basis)
+
+
+# ── oracle 7: absolute vs relative risk — ARR / RRR / NNT arithmetic ──────────────────
+# Given a control and a treatment event rate, ARR = CER-EER, RRR = ARR/CER, NNT = 1/ARR are fixed
+# arithmetic. Verifies a claimed NNT, RRR, or ARR — and reports the whole triple, so the absolute
+# reality sits next to any relative claim. Adjudicates only with both rates and exactly one claimed
+# statistic parseable; otherwise DEFERS.
+
+_CER = re.compile(r"control\D{0,20}?(\d+(?:\.\d+)?)\s*(%?)", re.I)
+_EER = re.compile(r"(?:treatment|treated|experimental|intervention)\D{0,20}?(\d+(?:\.\d+)?)\s*(%?)", re.I)
+_NNT_C = re.compile(r"(?:NNT|number\s+needed\s+to\s+treat)\D{0,6}?(\d+(?:\.\d+)?)", re.I)
+_RRR_C = re.compile(r"(?:RRR|relative\s+risk\s+reduction)\D{0,6}?(\d+(?:\.\d+)?)\s*(%?)", re.I)
+_ARR_C = re.compile(r"(?:ARR|absolute\s+risk\s+reduction)\D{0,6}?(\d+(?:\.\d+)?)\s*(%?)", re.I)
+
+
+def rr_match(text):
+    t = text.lower()
+    has_rates = "control" in t and bool(re.search(r"treatment|treated|experimental|intervention", t))
+    has_stat = bool(re.search(r"\bNNT\b|\bRRR\b|\bARR\b|number needed to treat|relative risk reduction|absolute risk reduction", text, re.I))
+    return has_rates and has_stat
+
+
+def rr_adjudicate(text):
+    cer, eer = _rate(_CER.search(text)), _rate(_EER.search(text))
+    if cer is None or eer is None or cer <= 0:
+        return None
+    arr = cer - eer
+    rrr = arr / cer
+    present = [(k, m) for k, m in (("NNT", _NNT_C.search(text)),
+                                   ("RRR", _RRR_C.search(text)),
+                                   ("ARR", _ARR_C.search(text))) if m]
+    if len(present) != 1:
+        return None                                  # need exactly one claimed statistic
+    kind, cm = present[0]
+    if kind == "NNT":
+        if arr <= 0:
+            return None                              # NNT is undefined without a risk reduction
+        true, claimed, is_pct = 1.0 / arr, float(cm.group(1)), False
+    else:
+        true = rrr if kind == "RRR" else arr
+        claimed, is_pct = _rate(cm), bool(cm.group(2))
+    if claimed is None:
+        return None
+    ok = _rounding_verdict(true, claimed, cm.group(1), is_pct)
+    if ok is None:
+        return None
+    triple = (f"control {cer*100:g}% vs treatment {eer*100:g}% -> ARR {arr*100:.3g}pp, "
+              f"RRR {rrr*100:.3g}%" + (f", NNT {1/arr:.4g}" if arr > 0 else " (no benefit)"))
+    return (SUPPORTED if ok else REFUTED, f"{triple}; claimed {kind} {'matches' if ok else 'does NOT match'}")
+
+
 ORACLES = [
     {"name": "number-theory", "type": "Python (deterministic)",     "match": nt_match, "adjudicate": nt_adjudicate},
     {"name": "stats-CI",       "type": "95% CI ⟷ 0.05 duality (deterministic)", "match": ci_match, "adjudicate": ci_adjudicate},
+    {"name": "diagnostic-PPV", "type": "Bayes PPV/NPV (deterministic)", "match": ppv_match, "adjudicate": ppv_adjudicate},
+    {"name": "risk-arithmetic", "type": "ARR/RRR/NNT arithmetic (deterministic)", "match": rr_match, "adjudicate": rr_adjudicate},
     {"name": "closed-form",    "type": "sympy CAS (exact)",          "match": cf_match, "adjudicate": cf_adjudicate},
     {"name": "symbolic",       "type": "sympy calculus/algebra (exact)", "match": sym_match, "adjudicate": sym_adjudicate},
     {"name": "convergence",    "type": "sympy convergence tests (sound)", "match": conv_match, "adjudicate": conv_adjudicate},
@@ -491,6 +612,8 @@ DEMO = [
     "evidence: observational_study claim: association",  # supported
     "RR 0.70 (95% CI 0.55-0.89), significant",           # stats — 95% CI excludes 1 -> significant (true)
     "RR 1.20 (95% CI 0.90-1.60), significant",           # stats — CI straddles 1 -> NOT significant (relative-risk spin; refuted)
+    "sensitivity 99%, specificity 99%, prevalence 0.1%, PPV 99%",  # Bayes — base-rate neglect: true PPV ~9% (refuted)
+    "control 2%, treatment 1%, NNT 100",                 # risk arithmetic — ARR 1pp -> NNT 100 (true)
     "This model is safe to deploy.",                     # uncovered
     "Scaling will solve reasoning.",                     # uncovered
 ]

@@ -55,6 +55,15 @@ CASES = [
     ("HR 0.80 (95% CI 0.65-0.98), not significant", REFUTED),  # stats-CI — ratio, CI excludes 1 => significant; "not significant" wrong
     ("1.30 (95% CI 0.95-1.78), significant", DEFERRED),     # SOUNDNESS — no estimate type => null unknown => DEFER
     ("OR 1.30 (90% CI 1.05-1.61), significant", DEFERRED),  # SOUNDNESS — 90% CI not dual to 0.05 => DEFER
+    ("sensitivity 99%, specificity 99%, prevalence 0.1%, PPV 99%", REFUTED),   # Bayes — base-rate neglect: true PPV ~9%
+    ("sensitivity 99%, specificity 99%, prevalence 0.1%, PPV 9%", SUPPORTED),  # Bayes — correct PPV
+    ("sensitivity 90%, specificity 90%, prevalence 50%, PPV 90%", SUPPORTED),  # Bayes — balanced base rate, PPV 90%
+    ("sensitivity 99%, specificity 99%, PPV 9%", DEFERRED),                    # SOUNDNESS — no prevalence => DEFER
+    ("control 2%, treatment 1%, NNT 100", SUPPORTED),      # risk — ARR 1pp => NNT 100
+    ("control 2%, treatment 1%, NNT 50", REFUTED),         # risk — true NNT is 100, not 50
+    ("control 2%, treatment 1%, RRR 50%", SUPPORTED),      # risk — relative reduction correct (basis surfaces ARR 1pp)
+    ("control 2%, treatment 1%, ARR 5%", REFUTED),         # risk — true ARR is 1pp, not 5%
+    ("control 2%, treatment 1%", DEFERRED),                # SOUNDNESS — no claimed statistic => DEFER
 ]
 
 
