@@ -65,6 +65,16 @@ _NT_PATTERNS = [
     (re.compile(r"(\d+)\s*\^\s*(\d+)\s*mod\s*(\d+)\s*=\s*(\d+)", re.I),
      lambda m: (pow(int(m[1]), int(m[2]), int(m[3])) == int(m[4]),
                 f"modular exp {m[1]}^{m[2]} mod {m[3]} = {pow(int(m[1]), int(m[2]), int(m[3]))}")),
+    # declarative forms ("X is prime") — models emit these more often than the interrogative
+    # ("Is X prime?"); the number stays capture group 1, so the same lambdas apply.
+    (re.compile(r"(\d+)\s+is\s+(?:an?\s+)?prime\b", re.I),
+     lambda m: (_is_prime(int(m[1])), f"primality of {m[1]}")),
+    (re.compile(r"(\d+)\s+is\s+a perfect square", re.I),
+     lambda m: (_is_square(int(m[1])), f"perfect-square test of {m[1]}")),
+    (re.compile(r"(\d+)\s+is\s+a perfect cube", re.I),
+     lambda m: (_is_cube(int(m[1])), f"perfect-cube test of {m[1]}")),
+    (re.compile(r"(\d+)\s+is\s+divisible by\s+(\d+)", re.I),
+     lambda m: (int(m[1]) % int(m[2]) == 0, f"divisibility {m[1]}/{m[2]}")),
 ]
 
 
@@ -121,7 +131,14 @@ def _S(s):
     s = s.replace("^", "**").replace("[", "(").replace("]", ")")
     s = re.sub(r"\*\*\{([^}]*)\}", r"**(\1)", s)         # LaTeX exponent x^{...} -> x**(...)
     s = re.sub(r"\binfinity\b|\binf\b", "oo", s, flags=re.I)
-    return parse_expr(s, transformations=_TX)
+    expr = parse_expr(s, transformations=_TX)
+    if expr.has(sympy.zoo, sympy.nan):
+        # singular/undefined parse (division by zero -> zoo, 0**-1, nan): the CAS can derive a
+        # finite-looking result (d/dx of zoo is 0) from an ill-posed input, yielding a confident
+        # SUPPORTED on nonsense. Refuse it here so the lane DEFERS (route() turns the raise into
+        # DEFERRED) rather than adjudicating an undefined quantity.
+        raise ValueError("singular or undefined expression")
+    return expr
 
 
 _AMBIG = {"e", "i"}  # lowercase e/i: could be Euler's number / the imaginary unit, NOT a free variable

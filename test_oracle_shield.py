@@ -44,6 +44,10 @@ CASES = [
     ("", DEFERRED),                                         # empty input
     (12345, DEFERRED),                                      # non-string input
     ("sqrt(2 = 4", DEFERRED),                               # malformed: matches closed-form, crashes parse -> MUST defer
+    ("d/dx (1/0) = 0", DEFERRED),                           # SOUNDNESS — 1/0 parses to zoo (singular); ill-posed input must DEFER, not SUPPORT
+    ("2147483647 is prime", SUPPORTED),                     # coverage — declarative primality (README marquee, previously DEFERRED)
+    ("9999800001 is a perfect square", SUPPORTED),          # coverage — declarative perfect-square, 99999^2 (previously DEFERRED)
+    ("2147483646 is prime", REFUTED),                       # coverage — declarative, both-direction gold (even => not prime)
 ]
 
 
