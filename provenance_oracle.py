@@ -41,6 +41,7 @@ SOURCE_OK = "SOURCE_OK"
 SOURCE_RETRACTED = "SOURCE_RETRACTED"
 SOURCE_FLAGGED = "SOURCE_FLAGGED"
 SOURCE_NOT_FOUND = "SOURCE_NOT_FOUND"
+SOURCE_MISMATCH = "SOURCE_MISMATCH"          # DOI is real but belongs to a DIFFERENT work than cited
 DEFERRED = "DEFERRED"
 
 MAILTO = "mellison.docs@gmail.com"          # polite-pool identification for Crossref
@@ -96,11 +97,78 @@ def real_crossref_updates(doi):
 REAL_TRANSPORT = {"handle": real_handle_lookup, "work": real_crossref_work, "updates": real_crossref_updates}
 
 
+# ── metadata match: the wrong-referent check ─────────────────────────────────────────
+# The 2026 hallucination literature's frontier case: a REAL DOI paired with a DIFFERENT paper's
+# title/authors sails through existence+retraction checks (cf. CiteCheck arXiv:2605.27700, the
+# HALLMARK benchmark). Deterministic, fail-closed comparison: the TITLE dominates — clear
+# disjunction refutes the pairing, the ambiguous middle DEFERS, never a guess.
+
+_NONWORD = re.compile(r"[^a-z0-9 ]+")
+
+
+def _norm(s):
+    return re.sub(r"\s+", " ", _NONWORD.sub(" ", str(s).lower())).strip()
+
+
+def _title_verdict(cited_title, record_title):
+    """True match / False mismatch / None ambiguous — normalized containment then token overlap."""
+    a, b = _norm(cited_title), _norm(record_title)
+    if not a or not b:
+        return None
+    if a == b or a in b or b in a:
+        return True
+    ta, tb = set(a.split()), set(b.split())
+    jac = len(ta & tb) / len(ta | tb) if ta | tb else 0.0
+    if jac >= 0.7:
+        return True
+    if jac <= 0.35:
+        return False
+    return None                                          # gray band -> defer
+
+
+def _metadata_verdict(cited, message):
+    """None = metadata consistent enough to proceed; else a (verdict, why) tuple."""
+    rec_titles = message.get("title") or []
+    if cited.get("title"):
+        if not rec_titles:
+            return DEFERRED, "the DOI's record carries no title — cannot confirm the referent"
+        tv = _title_verdict(cited["title"], rec_titles[0])
+        if tv is False:
+            return SOURCE_MISMATCH, (f"the DOI resolves to a DIFFERENT work: record title "
+                                     f"{rec_titles[0]!r} does not match the cited title")
+        if tv is None:
+            return DEFERRED, f"title similarity is ambiguous vs record title {rec_titles[0]!r} — check by hand"
+    corroborator_misses = []
+    year = None
+    for key in ("issued", "published-print", "published-online"):
+        parts = (message.get(key) or {}).get("date-parts") or []
+        if parts and parts[0]:
+            year = parts[0][0]
+            break
+    if cited.get("year") and year:
+        try:
+            if abs(int(cited["year"]) - int(year)) > 1:  # ±1 tolerates online-first vs print
+                corroborator_misses.append(f"year (cited {cited['year']}, record {year})")
+        except (TypeError, ValueError):
+            pass
+    if cited.get("author"):
+        families = [_norm(a.get("family", "")) for a in message.get("author") or []]
+        want = _norm(cited["author"])
+        if families and want and not any(want in f or f in want for f in families if f):
+            corroborator_misses.append(f"first author (cited {cited['author']!r})")
+    if len(corroborator_misses) >= 2 or (corroborator_misses and not cited.get("title")):
+        return SOURCE_FLAGGED, "metadata partially disagrees: " + "; ".join(corroborator_misses)
+    return None
+
+
 # ── the gate ──────────────────────────────────────────────────────────────────────────
 
-def check_doi(doi, transport=None):
-    """Fail-closed provenance verdict for one DOI. Network trouble -> DEFERRED, never a guess."""
+def check_doi(doi, transport=None, cited=None):
+    """Fail-closed provenance verdict for one DOI. Network trouble -> DEFERRED, never a guess.
+    `cited` (optional): {"title": ..., "year": ..., "author": ...} as they appear IN the citation —
+    enables the wrong-referent check against the DOI's actual Crossref record."""
     t = transport or REAL_TRANSPORT
+    flagged_meta = None
     try:
         status, payload = t["handle"](doi)
     except Exception as exc:  # noqa: BLE001 — unreachable is NOT nonexistent
@@ -113,7 +181,7 @@ def check_doi(doi, transport=None):
         return DEFERRED, f"handle lookup inconclusive (HTTP {status})"
 
     try:
-        w_status, _ = t["work"](doi)
+        w_status, w_payload = t["work"](doi)
     except Exception as exc:  # noqa: BLE001
         return DEFERRED, f"Crossref lookup failed ({exc})"
     if w_status == 404:
@@ -121,6 +189,13 @@ def check_doi(doi, transport=None):
                           "retraction status is unknowable here")
     if w_status != 200:
         return DEFERRED, f"Crossref works lookup inconclusive (HTTP {w_status})"
+
+    if cited:                                            # wrong-referent check, title-dominant
+        message = (w_payload or {}).get("message", {}) if isinstance(w_payload, dict) else {}
+        mv = _metadata_verdict({k: v for k, v in cited.items() if v}, message)
+        if mv is not None and mv[0] in (SOURCE_MISMATCH, DEFERRED):
+            return mv                                    # a mismatched referent never reaches OK
+        flagged_meta = mv                                 # (SOURCE_FLAGGED, why) or None — retraction still checked first
 
     try:
         u_status, u = t["updates"](doi)
@@ -144,7 +219,12 @@ def check_doi(doi, transport=None):
         return SOURCE_FLAGGED, f"unrecognized update notice type(s): {', '.join(unknown)} — read before citing"
     if flags:
         return SOURCE_FLAGGED, f"non-retraction notice(s): {', '.join(flags)} — read before citing"
-    return SOURCE_OK, "resolves; Crossref-registered; no retraction/withdrawal notice found"
+    if flagged_meta is not None:
+        return flagged_meta                              # corroborator (year/author) disagreements
+    ok_why = "resolves; Crossref-registered; no retraction/withdrawal notice found"
+    if cited and cited.get("title"):
+        ok_why += "; cited title matches the DOI's record"
+    return SOURCE_OK, ok_why
 
 
 def check_text(text, transport=None):
@@ -179,6 +259,19 @@ def _items(doi, *types):
 
 
 D = "10.1000/example.1"
+_REC = {"message": {"title": ["Deep learning for verification of medical claims"],
+                    "issued": {"date-parts": [[2015]]},
+                    "author": [{"family": "Ellison", "given": "M."}]}}
+METADATA_SELFTEST = [
+    # (name, cited dict, expected) — all against the _REC record above
+    ("exact title match", {"title": "Deep learning for verification of medical claims"}, SOURCE_OK),
+    ("subtitle containment matches", {"title": "Deep learning for verification"}, SOURCE_OK),
+    ("wrong referent title", {"title": "Attention is all you need"}, SOURCE_MISMATCH),
+    ("ambiguous title overlap defers", {"title": "Verification of deep claims in learning networks and medical robots"}, DEFERRED),
+    ("year off by one tolerated", {"title": "Deep learning for verification of medical claims", "year": "2016"}, SOURCE_OK),
+    ("year+author both off -> flagged", {"title": "Deep learning for verification of medical claims",
+                                          "year": "2011", "author": "Smith"}, SOURCE_FLAGGED),
+]
 SELFTEST = [
     ("clean source", D, _fake(), SOURCE_OK),
     ("retraction notice", D, _fake(updates_items=_items(D, "retraction")), SOURCE_RETRACTED),
@@ -208,6 +301,19 @@ def selftest(verbose=True):
         fails += (not ok)
         if verbose:
             print(f"  [{'ok ' if ok else 'FAIL'}] expect {expected:17} got {got:17} {name}")
+    for name, cited, expected in METADATA_SELFTEST:
+        got, _ = check_doi(D, _fake(work=(200, _REC)), cited=cited)
+        ok = got == expected
+        fails += (not ok)
+        if verbose:
+            print(f"  [{'ok ' if ok else 'FAIL'}] expect {expected:17} got {got:17} metadata: {name}")
+    # retraction must dominate a matching title
+    got, _ = check_doi(D, _fake(work=(200, _REC), updates_items=_items(D, "retraction")),
+                       cited={"title": "Deep learning for verification of medical claims"})
+    ok = got == SOURCE_RETRACTED
+    fails += (not ok)
+    if verbose:
+        print(f"  [{'ok ' if ok else 'FAIL'}] expect {SOURCE_RETRACTED:17} got {got:17} metadata: retraction dominates a matching title")
     for text, expected in EXTRACT_CASES:
         got = extract_doi(text)
         ok = got == expected
@@ -216,24 +322,27 @@ def selftest(verbose=True):
             print(f"  [{'ok ' if ok else 'FAIL'}] extract -> {str(got):42} {text[:44]!r}")
     if verbose:
         print(f"\n  {'ALL PASS' if fails == 0 else str(fails) + ' FAILURE(S)'} "
-              f"({len(SELFTEST) + len(EXTRACT_CASES)} planted cases)")
+              f"({len(SELFTEST) + len(METADATA_SELFTEST) + 1 + len(EXTRACT_CASES)} planted cases)")
     return fails
 
 
 LIVE_CASES = [
-    ("10.1016/S0140-6736(97)11096-0", SOURCE_RETRACTED),   # Wakefield 1998, retracted 2010
-    ("10.1038/nature14539", SOURCE_OK),                    # LeCun/Bengio/Hinton 2015, standing
-    ("10.99999/definitely-not-a-real-doi-2026", SOURCE_NOT_FOUND),
+    ("10.1016/S0140-6736(97)11096-0", None, SOURCE_RETRACTED),   # Wakefield 1998, retracted 2010
+    ("10.1038/nature14539", None, SOURCE_OK),                    # LeCun/Bengio/Hinton 2015, standing
+    ("10.99999/definitely-not-a-real-doi-2026", None, SOURCE_NOT_FOUND),
+    ("10.1038/nature14539", {"title": "Deep learning"}, SOURCE_OK),               # right referent
+    ("10.1038/nature14539", {"title": "Attention is all you need"}, SOURCE_MISMATCH),  # wrong referent
 ]
 
 
 def live_test():
     fails = 0
-    for doi, expected in LIVE_CASES:
-        got, why = check_doi(doi)
+    for doi, cited, expected in LIVE_CASES:
+        got, why = check_doi(doi, cited=cited)
         ok = got == expected
         fails += (not ok)
-        print(f"  [{'ok ' if ok else 'FAIL'}] expect {expected:17} got {got:17} {doi}")
+        tag = f" cited={cited['title']!r}" if cited else ""
+        print(f"  [{'ok ' if ok else 'FAIL'}] expect {expected:17} got {got:17} {doi}{tag}")
         print(f"        {why}")
     print(f"\n  {'LIVE: ALL PASS' if fails == 0 else str(fails) + ' LIVE FAILURE(S)'}")
     return fails
@@ -244,6 +353,9 @@ def main():
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--live-test", action="store_true", help="3 known-answer network probes")
     ap.add_argument("--check", metavar="DOI_OR_TEXT")
+    ap.add_argument("--cited-title", help="title as it appears in the citation (wrong-referent check)")
+    ap.add_argument("--cited-year", help="year as cited")
+    ap.add_argument("--cited-author", help="first-author family name as cited")
     args = ap.parse_args()
     if args.selftest:
         sys.exit(1 if selftest() else 0)
@@ -253,8 +365,14 @@ def main():
     if args.live_test:
         sys.exit(1 if live_test() else 0)
     if args.check:
-        r = check_text(args.check)
-        print(json.dumps(r, indent=2))
+        cited = {"title": args.cited_title, "year": args.cited_year, "author": args.cited_author}
+        cited = {k: v for k, v in cited.items() if v} or None
+        doi = extract_doi(args.check)
+        if not doi:
+            print(json.dumps({"doi": None, "verdict": DEFERRED, "why": "no DOI found in the text"}, indent=2))
+            return
+        verdict, why = check_doi(doi, cited=cited)
+        print(json.dumps({"doi": doi, "verdict": verdict, "why": why}, indent=2))
         return
     ap.print_help()
 

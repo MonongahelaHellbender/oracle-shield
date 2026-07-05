@@ -79,9 +79,12 @@ python3 provenance_oracle.py --check "10.1016/S0140-6736(97)11096-0"   # -> SOUR
 python3 provenance_oracle.py --live-test   # 3 known-answer network probes (Wakefield 1998 etc.)
 ```
 
-Verdicts: `SOURCE_OK / SOURCE_RETRACTED / SOURCE_FLAGGED / SOURCE_NOT_FOUND / DEFERRED` — network
-failure DEFERS (unreachable ≠ nonexistent), and non-Crossref DOIs defer on retraction status
-rather than guessing. It is deliberately **not** registered as a claim lane: passing provenance
+Verdicts: `SOURCE_OK / SOURCE_RETRACTED / SOURCE_FLAGGED / SOURCE_NOT_FOUND / SOURCE_MISMATCH /
+DEFERRED` — network failure DEFERS (unreachable ≠ nonexistent), and non-Crossref DOIs defer on
+retraction status rather than guessing. Pass `--cited-title` (optionally `--cited-year`,
+`--cited-author`) to also catch the **wrong-referent citation** — a real DOI paired with a
+different paper's title, the hallucination class that sails through existence checks; title
+comparison is fail-closed (clear disjunction → `SOURCE_MISMATCH`, ambiguous overlap → DEFER). It is deliberately **not** registered as a claim lane: passing provenance
 never *supports* a claim — only failing it disqualifies the citation as evidence. `SOURCE_OK`
 means "exists, no retraction notice," not "good science." (Prior art: Zotero's Retraction Watch
 alerts, scite — this gate's job is the fail-closed verdict spine for AI-emitted citations.)
@@ -104,6 +107,13 @@ alerts, scite — this gate's job is the fail-closed verdict spine for AI-emitte
   a bug. This is verification *infrastructure*, not a claim that most model output can be checked.
 
 ## Changelog
+
+**0.5.0** — provenance gate learns the **wrong-referent check**: cited title/year/author are
+compared against the DOI's actual Crossref record (title-dominant, fail-closed: clear disjunction
+→ `SOURCE_MISMATCH`, gray band → DEFER, year ±1 tolerated, retraction still trumps a matching
+title). Closes the hallucination class where a real DOI is paired with a different paper —
+cf. CiteCheck (arXiv:2605.27700) and the HALLMARK benchmark, against which a systematic
+evaluation is the declared next step. 22 planted cases + 5 live known-answer probes.
 
 **0.4.0** — added the **citation-provenance pre-gate** (`provenance_oracle.py`): DOI existence via
 the Handle System (catches fabricated/LLM-hallucinated citations) + retraction/correction notices
