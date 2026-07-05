@@ -338,6 +338,66 @@ def ev_adjudicate(text):
     return (REFUTED, f"GRADE-style: '{ev}' too weak to license '{cl}'")
 
 
+# ── oracle 4b: causal-wording licensing in prose (observational ⊬ unhedged causation) ──
+# The prose sibling of the GRADE lane. A claim citing OBSERVATIONAL evidence (cohort, case-control,
+# cross-sectional, survey/registry, retrospective) may make a HEDGED causal statement ("may cause",
+# "suggests") but an UNHEDGED causal assertion ("causes", "prevents", "reduces the risk of") is not
+# licensed -> REFUTED. Fail-closed: no observational cue, an experimental/RCT cue, or an idiomatic
+# object ("causes concern") -> DEFER.
+
+_OBS_CUE = re.compile(r"\b(?:observational(?:\s+study)?|cohort(?:\s+study)?|case[-\s]?control|cross[-\s]?sectional|correlational|survey\s+(?:study|data)|registry\s+data|retrospective(?:\s+study)?)\b", re.I)
+_EXPERIMENTAL_CUE = re.compile(r"\b(?:randomi[sz]ed|RCT|placebo[-\s]?controlled|double[-\s]?blind|experimental(?:\s+(?:study|trial))?)\b", re.I)
+_CAUSAL_VERB = re.compile(r"\b(?:causes?|caused|causing|prevents?|prevented|cures?|cured|triggers?|reduces?\s+the\s+risk|increases?\s+the\s+risk|leads?\s+to|led\s+to|results?\s+in)\b", re.I)
+_CAUSAL_IDIOM = re.compile(r"\b(?:causes?|caused|prevents?)\s+(?:concern|problems?|issues?|controversy|debate|confusion|alarm|trouble)\b", re.I)
+_HEDGE = re.compile(r"\b(?:may|might|could|possibly|potentially|suggests?|suggesting|appears?\s+to|seems?\s+to|is\s+associated|are\s+associated|associated\s+with|linked\s+to|tends?\s+to)\b", re.I)
+
+
+def causal_match(text):
+    return bool(_OBS_CUE.search(text)) and bool(_CAUSAL_VERB.search(text))
+
+
+def causal_adjudicate(text):
+    if not (_OBS_CUE.search(text) and _CAUSAL_VERB.search(text)):
+        return None
+    if _EXPERIMENTAL_CUE.search(text) or _CAUSAL_IDIOM.search(text):
+        return None                                  # experimental design licenses causation; idiom = not a causal claim
+    if _HEDGE.search(text):
+        return (SUPPORTED, "hedged causal wording is licensed by observational evidence")
+    return (REFUTED, "unhedged causal claim from observational evidence — GRADE licenses association, "
+                     "not causation; hedge it ('may', 'associated with') or cite an experimental design")
+
+
+# ── oracle 4c: universal safety / absolute-language ban (no finite study licenses a universal) ──
+# "no side effects" / "100% safe" / "completely harmless" project a universal negative no finite
+# study can establish (absence of observed harm != proof of no harm) -> REFUTED. Narrow by design:
+# a finite-scope qualifier ("in the trial", "were observed") = a report, not a universal -> DEFER;
+# a hedge next to the phrase ("virtually no side effects") -> DEFER.
+
+_ABSOLUTE_SAFETY = re.compile(
+    r"\b(?:no|zero)\s+(?:side[-\s]?effects?|adverse\s+effects?|adverse\s+events?|risks?|harm)\b"
+    r"|\b(?:100\s*%|completely|perfectly|totally|absolutely|entirely)\s+(?:safe|harmless|risk[-\s]?free)\b"
+    r"|\bguaranteed\s+safe\b|\bno\s+risk\s+(?:whatsoever|at\s+all)\b", re.I)
+_FINITE_SCOPE = re.compile(r"\b(?:in\s+(?:the|this|our|a|their)\s+(?:trial|study|sample|cohort|analysis|arm)|were?\s+(?:observed|reported|seen|found|recorded)|so\s+far|to\s+date|in\s+\d+\s+(?:patients|participants|subjects)|observed\s+in|reported\s+in)\b", re.I)
+_SAFETY_HEDGE = re.compile(r"\b(?:few|minimal|rare|rarely|fewer|generally|mostly|relatively|nearly|almost|virtually|little|near[-\s]?zero)\b", re.I)
+
+
+def safety_match(text):
+    return bool(_ABSOLUTE_SAFETY.search(text))
+
+
+def safety_adjudicate(text):
+    m = _ABSOLUTE_SAFETY.search(text)
+    if not m:
+        return None
+    if _FINITE_SCOPE.search(text):
+        return None                                  # scoped to a sample = a report, not a universal
+    span = text[max(0, m.start() - 25): m.end() + 5]
+    if _SAFETY_HEDGE.search(span):
+        return None                                  # hedged = not truly absolute
+    return (REFUTED, f"universal safety claim ('{m.group(0).strip()}') — no finite study licenses a "
+                     "universal negative; absence of observed harm is not evidence of no harm")
+
+
 # ── oracle 5: reported-statistic soundness — 95% CI ⟷ significance (deterministic) ────
 # A claim that reports an estimate with a 95% confidence interval AND asserts statistical
 # significance is checkable by arithmetic: for the standard two-sided 0.05 test, a 95% CI is
@@ -534,6 +594,8 @@ ORACLES = [
     {"name": "convergence",    "type": "sympy convergence tests (sound)", "match": conv_match, "adjudicate": conv_adjudicate},
     {"name": "modular",        "type": "ℤ/mℤ exhaustion (complete)",  "match": mod_match, "adjudicate": mod_adjudicate},
     {"name": "evidence-type",  "type": "GRADE-style ladder (illustrative)", "match": ev_match, "adjudicate": ev_adjudicate},
+    {"name": "causal-licensing", "type": "observational ⊬ unhedged causation (GRADE, prose)", "match": causal_match, "adjudicate": causal_adjudicate},
+    {"name": "universal-safety", "type": "no finite study licenses a universal (fail-closed)", "match": safety_match, "adjudicate": safety_adjudicate},
 ]
 
 

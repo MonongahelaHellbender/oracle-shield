@@ -64,6 +64,16 @@ CASES = [
     ("control 2%, treatment 1%, RRR 50%", SUPPORTED),      # risk — relative reduction correct (basis surfaces ARR 1pp)
     ("control 2%, treatment 1%, ARR 5%", REFUTED),         # risk — true ARR is 1pp, not 5%
     ("control 2%, treatment 1%", DEFERRED),                # SOUNDNESS — no claimed statistic => DEFER
+    # causal-licensing (prose GRADE): observational evidence and (un)hedged causal wording
+    ("The cohort study found that coffee causes cancer.", REFUTED),                       # obs + unhedged causal
+    ("The observational study suggests that smoking may cause disease.", SUPPORTED),      # obs + hedged causal
+    ("The randomized controlled trial showed the drug reduces the risk of stroke.", DEFERRED),  # experimental => out of scope
+    ("The case-control study caused concern among regulators.", DEFERRED),                # idiom, not a causal claim
+    # universal-safety ban
+    ("This herbal supplement has no side effects.", REFUTED),                             # universal negative
+    ("The new treatment is 100% safe.", REFUTED),                                         # absolute
+    ("No serious adverse events were observed in the trial.", DEFERRED),                  # finite-scope report, not universal
+    ("Patients reported virtually no side effects.", DEFERRED),                           # hedged ('virtually') => not absolute
 ]
 
 

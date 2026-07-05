@@ -89,6 +89,14 @@ never *supports* a claim — only failing it disqualifies the citation as eviden
 means "exists, no retraction notice," not "good science." (Prior art: Zotero's Retraction Watch
 alerts, scite — this gate's job is the fail-closed verdict spine for AI-emitted citations.)
 
+**Benchmarked on HALLMARK** (github.com/rpatrik96/hallmark, the citation-hallucination benchmark).
+On a seeded 160-entry sample of `dev_public` (`eval_hallmark.py`), the gate — one of HALLMARK's six
+sub-tests — **covers 42.5%** of entries (the rest DEFER: no DOI, or arXiv/DataCite DOIs not in
+Crossref) and on that covered slice scores **precision 0.88 · detection-rate 0.55 · FPR 0.10 ·
+F1 0.68**. That is the whole point stated honestly: a narrow, high-precision slice with a declared
+coverage denominator, not a full detector. (The 3 false positives are title-match over-fires — a
+tolerance-tuning item, not a soundness break.)
+
 ## Design
 
 - **Trust lives in the oracles, never the router.** A misroute, an unknown claim, or a *crashing* oracle all
@@ -98,15 +106,23 @@ alerts, scite — this gate's job is the fail-closed verdict spine for AI-emitte
 
 ## Honest limits
 
-- The nine oracles are a starting set, not the world. The evidence-type lane is a **minimal illustrative
-  GRADE-style ladder**, not an epidemiology engine; the clinical-statistics lanes check a claim's internal
-  arithmetic consistency, not whether the underlying estimate is correct.
+- The eleven oracles are a starting set, not the world. The evidence-type / causal-licensing /
+  universal-safety lanes are **minimal illustrative wording-licensing rules**, not an epidemiology
+  engine; the clinical-statistics lanes check a claim's internal arithmetic consistency, not whether
+  the underlying estimate is correct.
 - The symbolic lane is **sound but incomplete**: it computes the answer with a CAS and checks it against the
   claim by symbolic simplification; equality it cannot settle returns DEFERRED rather than a guess.
 - On real open-ended text the checkable fraction is **small** — that's the point of the coverage report, not
   a bug. This is verification *infrastructure*, not a claim that most model output can be checked.
 
 ## Changelog
+
+**0.6.0** — two **prose wording-licensing lanes** (fail-closed siblings of the GRADE lane):
+`causal-licensing` (observational evidence + an *unhedged* causal claim → REFUTED; hedged → SUPPORTED;
+an experimental/RCT cue or an idiom → DEFER) and `universal-safety` ("no side effects", "100% safe" →
+REFUTED, since no finite study licenses a universal negative; a finite-scope report or a hedge →
+DEFER). Eleven oracles; 69 tests. Also: `eval_hallmark.py` benchmarks the provenance gate against
+HALLMARK (see above).
 
 **0.5.0** — provenance gate learns the **wrong-referent check**: cited title/year/author are
 compared against the DOI's actual Crossref record (title-dominant, fail-closed: clear disjunction

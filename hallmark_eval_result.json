@@ -1,0 +1,46 @@
+{
+  "benchmark": "HALLMARK dev_public",
+  "sample_n": 160,
+  "seed": 20260705,
+  "covered": 68,
+  "uncovered": 92,
+  "coverage_fraction": 0.425,
+  "confusion_on_covered": {
+    "tp": 21,
+    "fp": 3,
+    "fn": 17,
+    "tn": 27
+  },
+  "precision": 0.875,
+  "detection_rate_recall": 0.553,
+  "false_positive_rate": 0.1,
+  "f1": 0.677,
+  "by_tier": {
+    "null": {
+      "cov": 30,
+      "tot": 67,
+      "correct": 27
+    },
+    "2": {
+      "cov": 19,
+      "tot": 40,
+      "correct": 8
+    },
+    "3": {
+      "cov": 9,
+      "tot": 30,
+      "correct": 5
+    },
+    "1": {
+      "cov": 10,
+      "tot": 18,
+      "correct": 8
+    },
+    "?": {
+      "cov": 0,
+      "tot": 5,
+      "correct": 0
+    }
+  },
+  "note": "Covered = DOI-bearing, Crossref-registered, resolving. The gate is 1 of HALLMARK's 6 sub-tests (DOI existence + retraction + wrong-referent); metrics are on the covered subset only. Coverage is honest, not hidden."
+}
