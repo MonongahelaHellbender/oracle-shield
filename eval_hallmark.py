@@ -42,7 +42,10 @@ def predict(entry, cache):
     if not doi:
         return "UNCOVERED", "no DOI in the citation"
     cited = {k: f.get(k) for k in ("title", "year", "author") if f.get(k)}
-    key = doi + "|" + "|".join(sorted(cited)) + "|" + "".join(str(cited.get(k, ""))[:40] for k in sorted(cited))
+    # the resolver version is part of the key: a verdict cached under an older resolver must MISS,
+    # not silently replay (a 0.6.x DEFER on an arXiv DOI is not a 0.7.0 verdict)
+    key = (getattr(pv, "__version__", "0") + "|" + doi + "|" + "|".join(sorted(cited)) + "|"
+           + "".join(str(cited.get(k, ""))[:40] for k in sorted(cited)))
     if key in cache:
         verdict, why, net = cache[key][0], cache[key][1], False
     else:

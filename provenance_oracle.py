@@ -47,6 +47,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+# Bumped whenever verdict logic changes (resolvers, checks, thresholds). Downstream verdict caches
+# (e.g. eval_hallmark) key on this so a resolver upgrade invalidates stale verdicts instead of
+# silently replaying them.
+__version__ = "0.7.0"
+
 SOURCE_OK = "SOURCE_OK"
 SOURCE_RETRACTED = "SOURCE_RETRACTED"
 SOURCE_FLAGGED = "SOURCE_FLAGGED"

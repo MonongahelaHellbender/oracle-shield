@@ -103,16 +103,16 @@ means "exists, no retraction notice," not "good science." (Prior art: Zotero's R
 alerts, scite — this gate's job is the fail-closed verdict spine for AI-emitted citations.)
 
 **Benchmarked on HALLMARK** (github.com/rpatrik96/hallmark, the citation-hallucination benchmark).
-On a seeded 160-entry sample of `dev_public` (`eval_hallmark.py`), the gate — one of HALLMARK's six
-sub-tests — **covered 42.5%** of entries and on that covered slice scored **precision 0.88 ·
-detection-rate 0.55 · FPR 0.10 · F1 0.68**. That is the whole point stated honestly: a narrow,
-high-precision slice with a declared coverage denominator, not a full detector. (The 3 false
-positives are title-match over-fires — a tolerance-tuning item, not a soundness break.)
-
-Those figures were measured **before** the DataCite/arXiv arm (v0.6): at that time the DEFERs were
-"no DOI, or arXiv/DataCite DOIs not in Crossref." Since AI/ML citations are overwhelmingly arXiv,
-resolving them (v0.7) removes the largest single DEFER bucket and should raise coverage; the exact
-re-measured numbers are a declared re-run of `eval_hallmark.py`, not asserted here.
+On a seeded 160-entry sample of `dev_public` (`eval_hallmark.py`, same sample and seed across
+versions), the gate — one of HALLMARK's six sub-tests — measured at v0.7 (with the DataCite/arXiv
+arm): **covered 49.4%** of entries and on that covered slice scored **precision 0.89 ·
+detection-rate 0.51 · FPR 0.09 · F1 0.65**. At v0.6 (Crossref-only) the same run covered 42.5%
+with F1 0.68 — the DataCite arm bought ~7 points of coverage, and the marginal entries it
+adjudicates are harder (arXiv/DataCite DOIs carry no retraction feed, so those verdicts are
+existence + metadata only, as their `why` states). That trade is the whole point stated honestly:
+coverage and covered-quality move together on a frontier, and both numbers are reported. (The 3
+false positives are title-match over-fires — a tolerance-tuning item, not a soundness break; the
+newly covered false negatives are the declared next tuning target.)
 
 ## Design
 
