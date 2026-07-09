@@ -50,7 +50,7 @@ import urllib.request
 # Bumped whenever verdict logic changes (resolvers, checks, thresholds). Downstream verdict caches
 # (e.g. eval_hallmark) key on this so a resolver upgrade invalidates stale verdicts instead of
 # silently replaying them.
-__version__ = "0.7.0"
+__version__ = "0.7.1"
 
 SOURCE_OK = "SOURCE_OK"
 SOURCE_RETRACTED = "SOURCE_RETRACTED"
@@ -200,6 +200,18 @@ def _metadata_verdict(cited, message):
             pass
     if cited.get("author"):
         families = [_norm(a.get("family", "")) for a in message.get("author") or []]
+        fam_set = {f for f in families if f}
+        # DISJOINT author sets (no cited token matches ANY record surname) is the swapped/placeholder-
+        # authors signature: the title matches, the authorship is fabricated. A real citation virtually
+        # always shares >=1 surname; tokens < 3 chars are dropped so initials can't rescue it. This
+        # fires alone (unlike a first-author wobble, which stays a mere corroborator miss below).
+        cited_tokens = {t for t in _norm(cited["author"]).replace(";", " ").replace(",", " ").split()
+                        if len(t) >= 3}
+        if fam_set and cited_tokens and not any(
+                t == f or t in f or f in t for t in cited_tokens for f in fam_set):
+            return SOURCE_FLAGGED, (f"cited authors are DISJOINT from the DOI record's authors "
+                                    f"(cited {cited['author']!r}) — title matches, authorship does not "
+                                    f"(swapped/placeholder-author signature)")
         want = _norm(cited["author"])
         if families and want and not any(want in f or f in want for f in families if f):
             corroborator_misses.append(f"first author (cited {cited['author']!r})")
@@ -380,6 +392,15 @@ METADATA_SELFTEST = [
     ("year off by one tolerated", {"title": "Deep learning for verification of medical claims", "year": "2016"}, SOURCE_OK),
     ("year+author both off -> flagged", {"title": "Deep learning for verification of medical claims",
                                           "year": "2011", "author": "Smith"}, SOURCE_FLAGGED),
+    ("DISJOINT author set alone -> flagged (swapped/placeholder-author signature)",
+     {"title": "Deep learning for verification of medical claims",
+      "author": "Doe, John; Smith, Jane"}, SOURCE_FLAGGED),
+    ("author list containing the record surname -> ok (one shared surname suffices)",
+     {"title": "Deep learning for verification of medical claims",
+      "author": "M. Ellison; J. Smith; Q. Zhang"}, SOURCE_OK),
+    ("year off alone, author matches -> ok (single corroborator miss never flags)",
+     {"title": "Deep learning for verification of medical claims",
+      "year": "2011", "author": "Ellison"}, SOURCE_OK),
 ]
 # wrong-referent logic reused verbatim on the DataCite arm, run against _DC_REC via _datacite_to_message
 DATACITE_METADATA_SELFTEST = [
@@ -387,6 +408,8 @@ DATACITE_METADATA_SELFTEST = [
     ("arXiv containment title -> OK", {"title": "Evidence-Bound Autonomous Research"}, SOURCE_OK),
     ("arXiv wrong referent -> MISMATCH", {"title": "Attention is all you need"}, SOURCE_MISMATCH),
     ("arXiv year+author both off -> FLAGGED", {"title": _DC_TITLE, "year": "2019", "author": "Smith"}, SOURCE_FLAGGED),
+    ("arXiv DISJOINT author set alone -> FLAGGED", {"title": _DC_TITLE,
+                                                     "author": "Rafailov, Rafael; Ermon, Stefano"}, SOURCE_FLAGGED),
 ]
 SELFTEST = [
     ("clean source", D, _fake(), SOURCE_OK),

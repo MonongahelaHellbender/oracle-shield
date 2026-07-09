@@ -104,15 +104,19 @@ alerts, scite — this gate's job is the fail-closed verdict spine for AI-emitte
 
 **Benchmarked on HALLMARK** (github.com/rpatrik96/hallmark, the citation-hallucination benchmark).
 On a seeded 160-entry sample of `dev_public` (`eval_hallmark.py`, same sample and seed across
-versions), the gate — one of HALLMARK's six sub-tests — measured at v0.7 (with the DataCite/arXiv
-arm): **covered 49.4%** of entries and on that covered slice scored **precision 0.89 ·
-detection-rate 0.51 · FPR 0.09 · F1 0.65**. At v0.6 (Crossref-only) the same run covered 42.5%
-with F1 0.68 — the DataCite arm bought ~7 points of coverage, and the marginal entries it
-adjudicates are harder (arXiv/DataCite DOIs carry no retraction feed, so those verdicts are
-existence + metadata only, as their `why` states). That trade is the whole point stated honestly:
-coverage and covered-quality move together on a frontier, and both numbers are reported. (The 3
-false positives are title-match over-fires — a tolerance-tuning item, not a soundness break; the
-newly covered false negatives are the declared next tuning target.)
+versions), the gate — one of HALLMARK's six sub-tests — measured at v0.7.1: **covered 49.4%** of
+entries and on that covered slice scored **precision 0.90 · detection-rate 0.60 · FPR 0.09 ·
+F1 0.72**. Version history on the identical sample, so the frontier is visible: v0.6
+(Crossref-only) covered 42.5% at F1 0.68; v0.7.0 (DataCite/arXiv arm) bought ~7 points of coverage
+at F1 0.65 because the marginal arXiv entries are harder (no retraction feed — existence + metadata
+only, as their `why` states); v0.7.1 (author-set disjointness: cited authors sharing zero surnames
+with the DOI record flags on its own — the swapped/placeholder-author signature) recovered the
+quality at full coverage with **zero new false positives**. Declared boundaries that remain
+UNCAUGHT by design: wrong-venue (venue strings too noisy to match deterministically), near-miss
+titles inside the fuzzy tolerance, preprint-vs-published and arXiv-version semantics — a citation
+whose DOI, title, and authors all check out but whose venue or version is misstated passes this
+gate. (The 3 false positives are title-match over-fires — a tolerance-tuning item, not a
+soundness break.)
 
 ## Design
 
