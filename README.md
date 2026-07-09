@@ -70,18 +70,31 @@ the answer undetermined.
 ## Citation provenance (separate pre-gate — `provenance_oracle.py`)
 
 Junk can also enter as a **fabricated or retracted citation**. The provenance gate checks a cited
-DOI's existence (Handle System — catches LLM-hallucinated DOIs) and retraction status (Crossref,
-which now carries the Retraction Watch database):
+DOI's existence (Handle System — catches LLM-hallucinated DOIs, and resolves Crossref **and**
+DataCite/arXiv DOIs alike), its metadata (Crossref works API for Crossref DOIs, the DataCite REST
+API for arXiv/DataCite DOIs), and retraction status (Crossref, which now carries the Retraction
+Watch database):
 
 ```
-python3 provenance_oracle.py --selftest    # 15 planted cases; refuses to run otherwise
+python3 provenance_oracle.py --selftest    # 34 planted cases; refuses to run otherwise
 python3 provenance_oracle.py --check "10.1016/S0140-6736(97)11096-0"   # -> SOURCE_RETRACTED
-python3 provenance_oracle.py --live-test   # 3 known-answer network probes (Wakefield 1998 etc.)
+python3 provenance_oracle.py --check "arXiv:2606.16541"                # bare arXiv id -> 10.48550/arXiv.2606.16541
+python3 provenance_oracle.py --live-test   # known-answer network probes (Wakefield 1998, a real arXiv paper, etc.)
 ```
+
+**arXiv / DataCite coverage.** arXiv IDs are the dominant citation form in AI/ML, and arXiv registers
+a DataCite DOI (`10.48550/arXiv.<id>`) for every paper. The gate resolves these: existence via the
+Handle System, and title/year/author cross-check via the DataCite REST API — so a real arXiv paper
+gets `SOURCE_OK` and a fabricated `10.48550/arXiv.2699.99999` gets `SOURCE_NOT_FOUND`, instead of both
+`DEFERRED`. A bare id (`2606.16541` or `arXiv:2606.16541`) is normalized to the canonical DOI first.
+The one honest narrowing: DataCite carries no retraction feed, so a DataCite `SOURCE_OK` means
+"exists + metadata confirmed," and its `why` string says the retraction/withdrawal status was not
+checkable — a strictly weaker guarantee than a Crossref `SOURCE_OK`, never silently equated.
 
 Verdicts: `SOURCE_OK / SOURCE_RETRACTED / SOURCE_FLAGGED / SOURCE_NOT_FOUND / SOURCE_MISMATCH /
-DEFERRED` — network failure DEFERS (unreachable ≠ nonexistent), and non-Crossref DOIs defer on
-retraction status rather than guessing. Pass `--cited-title` (optionally `--cited-year`,
+DEFERRED` — network failure DEFERS (unreachable ≠ nonexistent), and a DOI that resolves but is
+registered with neither Crossref nor DataCite (some other agency) DEFERS rather than guessing. Pass
+`--cited-title` (optionally `--cited-year`,
 `--cited-author`) to also catch the **wrong-referent citation** — a real DOI paired with a
 different paper's title, the hallucination class that sails through existence checks; title
 comparison is fail-closed (clear disjunction → `SOURCE_MISMATCH`, ambiguous overlap → DEFER). It is deliberately **not** registered as a claim lane: passing provenance
@@ -91,11 +104,15 @@ alerts, scite — this gate's job is the fail-closed verdict spine for AI-emitte
 
 **Benchmarked on HALLMARK** (github.com/rpatrik96/hallmark, the citation-hallucination benchmark).
 On a seeded 160-entry sample of `dev_public` (`eval_hallmark.py`), the gate — one of HALLMARK's six
-sub-tests — **covers 42.5%** of entries (the rest DEFER: no DOI, or arXiv/DataCite DOIs not in
-Crossref) and on that covered slice scores **precision 0.88 · detection-rate 0.55 · FPR 0.10 ·
-F1 0.68**. That is the whole point stated honestly: a narrow, high-precision slice with a declared
-coverage denominator, not a full detector. (The 3 false positives are title-match over-fires — a
-tolerance-tuning item, not a soundness break.)
+sub-tests — **covered 42.5%** of entries and on that covered slice scored **precision 0.88 ·
+detection-rate 0.55 · FPR 0.10 · F1 0.68**. That is the whole point stated honestly: a narrow,
+high-precision slice with a declared coverage denominator, not a full detector. (The 3 false
+positives are title-match over-fires — a tolerance-tuning item, not a soundness break.)
+
+Those figures were measured **before** the DataCite/arXiv arm (v0.6): at that time the DEFERs were
+"no DOI, or arXiv/DataCite DOIs not in Crossref." Since AI/ML citations are overwhelmingly arXiv,
+resolving them (v0.7) removes the largest single DEFER bucket and should raise coverage; the exact
+re-measured numbers are a declared re-run of `eval_hallmark.py`, not asserted here.
 
 ## Design
 
@@ -116,6 +133,17 @@ tolerance-tuning item, not a soundness break.)
   a bug. This is verification *infrastructure*, not a claim that most model output can be checked.
 
 ## Changelog
+
+**0.7.0** — provenance gate gains a **DataCite / arXiv arm**. arXiv IDs are the dominant citation
+form in AI/ML and were the largest coverage hole: they resolve in the Handle System but not in
+Crossref, so every one landed on `DEFERRED`. Now, when Crossref disowns a DOI (HTTP 404), the gate
+falls through to the DataCite REST API — a real arXiv paper gets `SOURCE_OK`, a fabricated
+`10.48550/arXiv.2699.99999` gets `SOURCE_NOT_FOUND`, and the wrong-referent title/year/author
+cross-check runs against the DataCite record (the Crossref logic is reused verbatim via a
+shape-adapter). Bare arXiv ids (`2606.16541`, `arXiv:2606.16541`) normalize to the canonical
+`10.48550/arXiv.<id>`. Fail-closed throughout: DataCite has no retraction feed, so a DataCite
+`SOURCE_OK` is existence + metadata only (its `why` says so), and a DOI registered with neither
+Crossref nor DataCite still DEFERS. 34 planted selftest cases + 8 known-answer live probes.
 
 **0.6.0** — two **prose wording-licensing lanes** (fail-closed siblings of the GRADE lane):
 `causal-licensing` (observational evidence + an *unhedged* causal claim → REFUTED; hedged → SUPPORTED;
