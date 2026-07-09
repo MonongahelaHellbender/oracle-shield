@@ -3,3 +3,6 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+# regenerable eval artifacts (committed v-tagged logs are the record; the cache is not)
+hallmark_cache.json
+hallmark_run.log
