@@ -116,7 +116,11 @@ UNCAUGHT by design: wrong-venue (venue strings too noisy to match deterministica
 titles inside the fuzzy tolerance, preprint-vs-published and arXiv-version semantics — a citation
 whose DOI, title, and authors all check out but whose venue or version is misstated passes this
 gate. (The 3 false positives are title-match over-fires — a tolerance-tuning item, not a
-soundness break.)
+soundness break.) One venue-class slice became catchable at v0.7.2: a DataCite/arXiv-registered DOI
+cited with a non-preprint venue claim flags as PREPRINT CITED AS PUBLISHED — deterministic
+(registration agency vs venue claim, no fuzzy matching). Note the benchmark-input boundary: HALLMARK's
+public fields carry no venue, so its venue-class entries are uncatchable from the provided inputs and
+the v0.7.1 covered metrics carry over to v0.7.2 by construction.
 
 ## Design
 

@@ -50,7 +50,7 @@ import urllib.request
 # Bumped whenever verdict logic changes (resolvers, checks, thresholds). Downstream verdict caches
 # (e.g. eval_hallmark) key on this so a resolver upgrade invalidates stale verdicts instead of
 # silently replaying them.
-__version__ = "0.7.1"
+__version__ = "0.7.2"
 
 SOURCE_OK = "SOURCE_OK"
 SOURCE_RETRACTED = "SOURCE_RETRACTED"
@@ -265,6 +265,17 @@ def _check_datacite(doi, transport, cited=None):
         mv = _metadata_verdict({k: v for k, v in cited.items() if v}, _datacite_to_message(attrs))
         if mv is not None:                               # MISMATCH / DEFERRED / FLAGGED returned as-is —
             return mv                                    # no Crossref retraction feed to check first
+        # PREPRINT-CITED-AS-PUBLISHED (0.7.2): the DOI is registered at DataCite (a preprint/dataset
+        # registry — for 10.48550 DOIs, arXiv), but the citation claims a VENUE that isn't the
+        # preprint server. Deterministic: registration agency vs venue claim, no fuzzy matching.
+        # (General venue-vs-record matching stays a DECLARED boundary — acronym forms like CVPR vs
+        # the record's spelled-out container-title make token overlap unreliable.)
+        venue = _norm(str(cited.get("venue") or ""))
+        if venue and "arxiv" not in venue and "preprint" not in venue:
+            return SOURCE_FLAGGED, (f"PREPRINT CITED AS PUBLISHED: the DOI is a DataCite/preprint "
+                                    f"registration, but the citation claims the venue "
+                                    f"{cited.get('venue')!r} — verify the published version exists "
+                                    f"and cite its DOI instead")
     why = ("resolves; DataCite-registered (e.g. arXiv) — existence confirmed; retraction/withdrawal "
            "status is not tracked in DataCite, so this verdict is existence + metadata only")
     if cited and cited.get("title"):
@@ -410,6 +421,12 @@ DATACITE_METADATA_SELFTEST = [
     ("arXiv year+author both off -> FLAGGED", {"title": _DC_TITLE, "year": "2019", "author": "Smith"}, SOURCE_FLAGGED),
     ("arXiv DISJOINT author set alone -> FLAGGED", {"title": _DC_TITLE,
                                                      "author": "Rafailov, Rafael; Ermon, Stefano"}, SOURCE_FLAGGED),
+    ("arXiv DOI cited with a JOURNAL venue -> FLAGGED (preprint cited as published)",
+     {"title": _DC_TITLE, "venue": "NeurIPS 2025"}, SOURCE_FLAGGED),
+    ("arXiv DOI cited AS arXiv -> OK (honest preprint citation)",
+     {"title": _DC_TITLE, "venue": "arXiv preprint"}, SOURCE_OK),
+    ("arXiv DOI with no venue claim -> OK (nothing to contradict)",
+     {"title": _DC_TITLE}, SOURCE_OK),
 ]
 SELFTEST = [
     ("clean source", D, _fake(), SOURCE_OK),
